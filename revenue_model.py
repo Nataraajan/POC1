@@ -2,7 +2,7 @@
 
 Actuals stay frozen. Forecast months apply product-level drivers:
 originations growth, yield, nco rate, paydown rate.
-LaaS stays off-book: fee = originations × fee rate.
+LaaS stays off-book: fee = originations x fee rate.
 """
 
 from __future__ import annotations
@@ -15,6 +15,10 @@ DATA = Path(__file__).parent / "data" / "monthly_actuals.csv"
 
 
 def load_actuals() -> pd.DataFrame:
+    if not DATA.exists():
+        from generate_sample_data import main as build_sample
+
+        build_sample()
     df = pd.read_csv(DATA)
     df["month"] = pd.PeriodIndex(df["month"], freq="M")
     return df
