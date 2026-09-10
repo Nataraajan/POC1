@@ -1,12 +1,12 @@
 # Product Revenue Model
 
-Illustrative 24-month book for CreditFresh, MoneyKey, Fora, QuidMarket, and LaaS.
-Not Propel data. Actuals stay locked. Forecast moves drivers only.
+Two-product POC. Monthly engine, 24-month forecast.
+Applications → approval → originations → CLAB → revenue.
+Default comes from a vintage curve fitted on mock history.
 
 ```bash
 pip install -r requirements.txt
-python generate_sample_data.py
 streamlit run app.py
 ```
 
-LaaS fees sit in revenue and not in CLAB.
+No CSV required. Data is generated in `model.py`.
