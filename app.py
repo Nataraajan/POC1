@@ -12,6 +12,7 @@ LINE = "#E2E8F0"
 BLUE = "#2563EB"
 GREY = "#94A3B8"
 TEAL = "#0F766E"
+CHART = dict(displayModeBar=False)
 
 st.markdown(
     """
@@ -33,7 +34,7 @@ st.markdown(
     """
 <div class="header-block">
   <h1 class="main-title">Product Revenue Model</h1>
-  <p class="tagline">Two-product POC. Monthly engine, 24-month forecast. Vintage default curve fitted from mock history and overlaid on new originations. Illustrative — not Propel data.</p>
+  <p class="tagline">Two-product POC. Monthly engine, 24-month forecast. Cached. One view at a time.</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -45,14 +46,14 @@ with st.sidebar:
     appr = st.slider("Approval rate add", -0.05, 0.05, 0.0, 0.01, format="%.2f")
     yld = st.slider("Yield add (annual)", -0.20, 0.20, 0.0, 0.02, format="%.2f")
     dflt = st.slider("Lifetime default add", 0.0, 0.15, 0.0, 0.01, format="%.2f")
-    st.caption("Seasonality is already in applications. Grain is monthly because vintages age by month.")
 
-monthly, history, triangle, curves = run(
-    Drivers(apps_growth=apps_g, approval_add=appr, yield_add=yld, default_add=dflt)
-)
+@st.cache_data(show_spinner=False)
+def _run(apps_g, appr, yld, dflt):
+    return run(Drivers(apps_growth=apps_g, approval_add=appr, yield_add=yld, default_add=dflt))
+
+monthly, history, triangle, curves = _run(apps_g, appr, yld, dflt)
 co = company_pack(monthly)
 last_act = co[~co["is_forecast"]].iloc[-1]
-last_fc = co[co["is_forecast"]].iloc[-1]
 
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Ending CLAB", f"${last_act['ending_clab']/1e6:.0f}M")
@@ -61,26 +62,13 @@ k3.metric("Applications", f"{last_act['applications']/1000:.0f}k")
 k4.metric("On-book yield", f"{last_act['yield_ann']*100:.0f}%")
 k5.metric("Monthly default", f"{last_act['default_rate']*100:.1f}%")
 
-tab1, tab2 = st.tabs(["Forecast", "Vintage default"])
+view = st.radio("View", ["Forecast", "Vintage default"], horizontal=True)
 
-with tab1:
+if view == "Forecast":
     fig = go.Figure()
-    fig.add_bar(
-        x=co["month"],
-        y=co["revenue"] / 1e6,
-        marker_color=[GREY if not f else BLUE for f in co["is_forecast"]],
-    )
-    fig.update_layout(
-        title=dict(text="Revenue ($M) — grey actual, blue forecast", font=dict(color=NAVY, size=16)),
-        height=300,
-        margin=dict(l=10, r=10, t=40, b=10),
-        plot_bgcolor="#fff",
-        paper_bgcolor="#fff",
-        yaxis=dict(gridcolor=LINE),
-        xaxis=dict(dtick=3, tickangle=-45),
-        showlegend=False,
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    fig.add_bar(x=co["month"], y=co["revenue"] / 1e6, marker_color=[GREY if not f else BLUE for f in co["is_forecast"]])
+    fig.update_layout(title=dict(text="Revenue ($M)", font=dict(color=NAVY, size=16)), height=280, margin=dict(l=10, r=10, t=36, b=10), plot_bgcolor="#fff", paper_bgcolor="#fff", yaxis=dict(gridcolor=LINE), xaxis=dict(dtick=6), showlegend=False)
+    st.plotly_chart(fig, use_container_width=True, config=CHART)
 
     left, right = st.columns(2)
     with left:
@@ -88,38 +76,17 @@ with tab1:
         for product, color in zip(PRODUCTS, [NAVY, BLUE]):
             sl = monthly[monthly["product"] == product]
             fig2.add_scatter(x=sl["month"], y=sl["ending_clab"] / 1e6, name=product, line=dict(color=color))
-        fig2.update_layout(
-            title=dict(text="CLAB ($M)", font=dict(color=NAVY, size=16)),
-            height=320,
-            margin=dict(l=10, r=10, t=40, b=30),
-            plot_bgcolor="#fff",
-            paper_bgcolor="#fff",
-            yaxis=dict(gridcolor=LINE),
-            xaxis=dict(dtick=3),
-            legend=dict(orientation="h", y=-0.2),
-        )
-        st.plotly_chart(fig2, use_container_width=True)
+        fig2.update_layout(title=dict(text="CLAB ($M)", font=dict(color=NAVY, size=16)), height=300, margin=dict(l=10, r=10, t=36, b=20), plot_bgcolor="#fff", paper_bgcolor="#fff", yaxis=dict(gridcolor=LINE), xaxis=dict(dtick=6), legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig2, use_container_width=True, config=CHART)
     with right:
         fig3 = go.Figure()
         for product, color in zip(PRODUCTS, [NAVY, BLUE]):
             sl = monthly[monthly["product"] == product]
             fig3.add_bar(x=sl["month"], y=sl["originations"] / 1e6, name=product, marker_color=color)
-        fig3.update_layout(
-            barmode="stack",
-            title=dict(text="Originations ($M)", font=dict(color=NAVY, size=16)),
-            height=320,
-            margin=dict(l=10, r=10, t=40, b=30),
-            plot_bgcolor="#fff",
-            paper_bgcolor="#fff",
-            yaxis=dict(gridcolor=LINE),
-            xaxis=dict(dtick=3),
-            legend=dict(orientation="h", y=-0.2),
-        )
-        st.plotly_chart(fig3, use_container_width=True)
+        fig3.update_layout(barmode="stack", title=dict(text="Originations ($M)", font=dict(color=NAVY, size=16)), height=300, margin=dict(l=10, r=10, t=36, b=20), plot_bgcolor="#fff", paper_bgcolor="#fff", yaxis=dict(gridcolor=LINE), xaxis=dict(dtick=6), legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig3, use_container_width=True, config=CHART)
 
-    show = monthly[monthly["month"] == last_act["month"]][
-        ["product", "applications", "approval_rate", "originations", "ending_clab", "revenue", "nco", "yield_ann", "default_rate"]
-    ].copy()
+    show = monthly[monthly["month"] == last_act["month"]][["product", "applications", "approval_rate", "originations", "ending_clab", "revenue", "nco", "yield_ann", "default_rate"]].copy()
     show["applications"] = show["applications"].round(0).astype(int)
     show["approval_rate"] = (show["approval_rate"] * 100).round(1)
     for c in ["originations", "ending_clab", "revenue", "nco"]:
@@ -127,53 +94,19 @@ with tab1:
     show["yield_ann"] = (show["yield_ann"] * 100).round(0)
     show["default_rate"] = (show["default_rate"] * 100).round(1)
     st.dataframe(show, use_container_width=True, hide_index=True)
-    st.caption("Applications x approval x ticket = originations. Revenue = avg CLAB x yield. Default here is NCO / avg CLAB this month.")
-
-with tab2:
-    st.caption(
-        "Each historical origination month is a vintage. We watch how much of that vintage charges off as it ages. "
-        "Average those paths into a product curve. New forecast originations inherit that curve."
-    )
+else:
+    st.caption("Grey = observed vintages. Teal = fitted curve the forecast uses.")
     product = st.radio("Product", list(PRODUCTS), horizontal=True)
     t = triangle[triangle["product"] == product].copy()
     t["observed_cum"] = t.groupby("vintage")["observed_nco_rate"].cumsum()
-    latest_vints = list(dict.fromkeys(t["vintage"].tolist()))[-8:]
-
+    latest_vints = list(dict.fromkeys(t["vintage"].tolist()))[-6:]
     fig4 = go.Figure()
     for v in latest_vints:
         sl = t[t["vintage"] == v]
-        fig4.add_scatter(
-            x=sl["mob"],
-            y=sl["observed_cum"] * 100,
-            mode="lines",
-            line=dict(color=GREY, width=1),
-            name=v,
-            opacity=0.7,
-        )
+        fig4.add_scatter(x=sl["mob"], y=sl["observed_cum"] * 100, mode="lines", line=dict(color=GREY, width=1), name=v)
     fit = t.drop_duplicates("mob").sort_values("mob")
-    fig4.add_scatter(
-        x=fit["mob"],
-        y=fit["fitted_cum_default"] * 100,
-        mode="lines+markers",
-        line=dict(color=TEAL, width=3),
-        name="Fitted overlay",
-    )
-    fig4.update_layout(
-        title=dict(text=f"{product} — observed vintages vs fitted curve", font=dict(color=NAVY, size=16)),
-        height=360,
-        margin=dict(l=10, r=10, t=40, b=10),
-        plot_bgcolor="#fff",
-        paper_bgcolor="#fff",
-        xaxis_title="Months on book",
-        yaxis_title="Cumulative default %",
-        yaxis=dict(gridcolor=LINE),
-        legend=dict(orientation="h", y=-0.2),
-    )
-    st.plotly_chart(fig4, use_container_width=True)
-
-    pivot = t[t["vintage"].isin(latest_vints)].pivot_table(
-        index="vintage", columns="mob", values="observed_cum", aggfunc="last"
-    )
-    st.markdown("**Vintage triangle (cumulative default)**")
+    fig4.add_scatter(x=fit["mob"], y=fit["fitted_cum_default"] * 100, mode="lines+markers", line=dict(color=TEAL, width=3), name="Fitted overlay")
+    fig4.update_layout(title=dict(text=f"{product} vintages vs fitted curve", font=dict(color=NAVY, size=16)), height=340, margin=dict(l=10, r=10, t=36, b=10), plot_bgcolor="#fff", paper_bgcolor="#fff", xaxis_title="Months on book", yaxis_title="Cumulative default %", yaxis=dict(gridcolor=LINE), legend=dict(orientation="h", y=-0.2))
+    st.plotly_chart(fig4, use_container_width=True, config=CHART)
+    pivot = t[t["vintage"].isin(latest_vints)].pivot_table(index="vintage", columns="mob", values="observed_cum", aggfunc="last")
     st.dataframe((pivot * 100).round(1), use_container_width=True)
-    st.caption("Grey lines are history. Teal line is what the forecast uses. Default slider shifts that teal curve.")
