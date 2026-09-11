@@ -1,44 +1,42 @@
 """Vintage default tool."""
-
-import plotly.graph_objects as go
 import streamlit as st
-
-from model import Drivers, PRODUCTS, run
-from ui import CHART, CSS, GREY, LINE, NAVY, TEAL, header
+from ui import CSS, header
+from vintage_engine import analyze_loans
 
 st.set_page_config(page_title="Vintage default", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
-st.markdown(
-    header(
-        "Vintage default",
-        "Observed charge-off paths by origination month. Average = the curve overlaid on new originations.",
-    ),
-    unsafe_allow_html=True,
-)
+st.markdown(header("Vintage default", "Loan-level file in. Small curve out. The forecast uses the curve, not the loans. Mock data."), unsafe_allow_html=True)
 
 with st.sidebar:
-    dflt = st.slider("Lifetime default add", 0.0, 0.15, 0.0, 0.01, format="%.2f")
+    n = st.select_slider("New customers / month", options=[10000, 20000, 40000], value=20000)
+    st.caption("24 months x 2 products. 40k / month is about 1M loans.")
 
+@st.cache_data(show_spinner="Analyzing loan file...")
+def _analyze(n):
+    return analyze_loans(n)
 
-@st.cache_data(show_spinner=False)
-def _run(dflt):
-    return run(Drivers(default_add=dflt))
+out = _analyze(n)
+a, b, c, d = st.columns(4)
+a.metric("Loans analyzed", f"{out['n_loans']:,}")
+b.metric("Runtime", f"{out['seconds']:.2f}s")
+c.metric("Vintages", str(out["vintages"]))
+d.metric("Overlay points", str(out["curve_points"]))
 
+st.markdown("**1. Loan file (sample)**")
+st.dataframe(out["sample"], use_container_width=True, hide_index=True)
+st.caption("default_mob = month charged off. -1 = paid or still current.")
 
-_, _, triangle, _ = _run(dflt)
-product = st.radio("Product", list(PRODUCTS), horizontal=True)
-t = triangle[triangle["product"] == product].copy()
-t["observed_cum"] = t.groupby("vintage")["observed_nco_rate"].cumsum()
-latest = list(dict.fromkeys(t["vintage"].tolist()))[-6:]
+st.markdown("**2. Vintage triangle (cumulative default %)**")
+product = st.radio("Product", ["CreditFresh", "MoneyKey"], horizontal=True)
+tri = out["triangle"]
+tri = tri[tri["product"] == product]
+latest = list(dict.fromkeys(tri["vintage"].tolist()))[-8:]
+pivot = tri[tri["vintage"].isin(latest)].pivot_table(index="vintage", columns="mob", values="observed_cum", aggfunc="last") * 100
+st.dataframe(pivot.round(1), use_container_width=True)
 
-fig = go.Figure()
-for v in latest:
-    sl = t[t["vintage"] == v]
-    fig.add_scatter(x=sl["mob"], y=sl["observed_cum"] * 100, mode="lines", line=dict(color=GREY, width=1), name=v)
-fit = t.drop_duplicates("mob").sort_values("mob")
-fig.add_scatter(x=fit["mob"], y=fit["fitted_cum_default"] * 100, mode="lines+markers", line=dict(color=TEAL, width=3), name="Fitted overlay")
-fig.update_layout(title=dict(text=f"{product} vintages vs fitted curve", font=dict(color=NAVY, size=16)), height=360, margin=dict(l=10, r=10, t=36, b=10), plot_bgcolor="#fff", paper_bgcolor="#fff", xaxis_title="Months on book", yaxis_title="Cumulative default %", yaxis=dict(gridcolor=LINE), legend=dict(orientation="h", y=-0.2))
-st.plotly_chart(fig, use_container_width=True, config=CHART)
-pivot = t[t["vintage"].isin(latest)].pivot_table(index="vintage", columns="mob", values="observed_cum", aggfunc="last")
-st.dataframe((pivot * 100).round(1), use_container_width=True)
-st.caption("Grey = history. Teal = curve used in the forecast.")
+st.markdown("**3. Overlay curve — this is what the forecast imports**")
+ov = out["overlay"]
+ov_p = ov[ov["product"] == product].set_index("mob")["cum_default"] * 100
+st.line_chart(ov_p, height=240)
+st.dataframe(ov.assign(cum_default=(ov["cum_default"] * 100).round(1)).rename(columns={"cum_default": "cum default %"}), use_container_width=True, hide_index=True)
+st.caption("Written to data/overlay_curve.csv. 16 rows, not a million.")
