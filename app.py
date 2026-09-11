@@ -1,64 +1,68 @@
-"""Forecast tool — monthly pack, changeable drivers."""
+"""Forecast tool. Small file. Overlay curve in, not the loan tape."""
 
+import pandas as pd
 import streamlit as st
 
-from model import Drivers, company_pack, run
+from forecast_engine import PRODUCTS, company_pack, run
 from ui import CSS, header
 
 st.set_page_config(page_title="Forecast", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
 st.markdown(
-    header("Forecast", "Monthly pack. Change a driver, the next 24 months move. Not Propel data."),
+    header(
+        "Forecast",
+        "Apps x approval x ticket = originations. CLAB and PLL use the vintage overlay. Not the 2M loan file.",
+    ),
     unsafe_allow_html=True,
 )
 
 with st.sidebar:
     st.markdown("**Drivers**")
-    apps_g = st.slider("Applications growth / month", -0.02, 0.03, 0.0, 0.005, format="%.3f")
-    appr = st.slider("Approval rate add", -0.05, 0.05, 0.0, 0.01, format="%.2f")
-    yld = st.slider("Yield add (annual)", -0.20, 0.20, 0.0, 0.02, format="%.2f")
-    dflt = st.slider("Lifetime default add", 0.0, 0.15, 0.0, 0.01, format="%.2f")
-    st.caption("Fixed: seasonality, ticket, product mix. You move demand, underwriting, price, credit.")
+    apps_m = st.slider("Applications multiplier", 0.7, 1.4, 1.0, 0.05)
+    appr = st.slider("Approval rate add", -0.05, 0.05, 0.0, 0.01)
+    yld = st.slider("Yield add (annual)", -0.20, 0.20, 0.0, 0.02)
+    st.caption("Ticket and base approval/yield sit on the product card. Seasonality is on applications.")
 
 
 @st.cache_data(show_spinner=False)
-def _run(apps_g, appr, yld, dflt):
-    return run(Drivers(apps_growth=apps_g, approval_add=appr, yield_add=yld, default_add=dflt))
+def _run(apps_m, appr, yld):
+    return run(apps_mult=apps_m, approval_add=appr, yield_add=yld)
 
 
-monthly, _, _, _ = _run(apps_g, appr, yld, dflt)
-co = company_pack(monthly)
-last_act = co[~co["is_forecast"]].iloc[-1]
-last_fc = co[co["is_forecast"]].iloc[-1]
+book = _run(apps_m, appr, yld)
+co = company_pack(book)
+act = co[~co["is_forecast"]].iloc[-1]
 
-a, b, c, d, e = st.columns(5)
-a.metric("Last actual CLAB", f"${last_act['ending_clab']/1e6:.0f}M")
-b.metric("Last actual revenue", f"${last_act['revenue']/1e6:.1f}M")
-c.metric("Applications", f"{int(last_act['applications']):,}")
-d.metric("Forecast end CLAB", f"${last_fc['ending_clab']/1e6:.0f}M")
-e.metric("Forecast end revenue / mo", f"${last_fc['revenue']/1e6:.1f}M")
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("CLAB", f"${act['ending_clab']/1e6:.0f}M")
+c2.metric("Revenue / mo", f"${act['revenue']/1e6:.1f}M")
+c3.metric("Originations", f"${act['originations']/1e6:.1f}M")
+c4.metric("PLL / mo", f"${act['pll']/1e6:.1f}M")
+c5.metric("Yield", f"{act['yield_ann']*100:.0f}%")
 
-st.markdown("**Company monthly**")
+st.markdown("**Product inputs (base month)**")
+st.dataframe(
+    pd.DataFrame([{"product": p, "applications": s["apps"], "ticket": s["ticket"], "approval": s["approval"], "yield": s["yield"]} for p, s in PRODUCTS.items()]),
+    use_container_width=True,
+    hide_index=True,
+)
+
+st.markdown("**Monthly pack**")
 view = co.copy()
-view["month"] = view["month"].astype(str)
-out = view[["month", "is_forecast", "applications", "originations", "ending_clab", "revenue", "nco", "yield_ann", "default_rate"]].copy()
+out = view[["month", "is_forecast", "applications", "originations", "ending_clab", "revenue", "pll", "nco", "ending_ecl", "yield_ann"]].copy()
 out["applications"] = out["applications"].round(0).astype(int)
-out["originations"] = (out["originations"] / 1e6).round(2)
-out["ending_clab"] = (out["ending_clab"] / 1e6).round(1)
-out["revenue"] = (out["revenue"] / 1e6).round(2)
-out["nco"] = (out["nco"] / 1e6).round(2)
+for col in ["originations", "ending_clab", "revenue", "pll", "nco", "ending_ecl"]:
+    out[col] = (out[col] / 1e6).round(2)
 out["yield_ann"] = (out["yield_ann"] * 100).round(0)
-out["default_rate"] = (out["default_rate"] * 100).round(1)
-out = out.rename(columns={"is_forecast": "forecast", "originations": "orig $M", "ending_clab": "CLAB $M", "revenue": "rev $M", "nco": "NCO $M", "yield_ann": "yield %", "default_rate": "default %"})
-st.dataframe(out, use_container_width=True, hide_index=True, height=420)
+out = out.rename(columns={"is_forecast": "forecast", "originations": "orig $M", "ending_clab": "CLAB $M", "revenue": "rev $M", "pll": "PLL $M", "nco": "NCO $M", "ending_ecl": "ECL $M", "yield_ann": "yield %"})
+st.dataframe(out, use_container_width=True, hide_index=True, height=380)
 
-chart = co.set_index(co["month"].astype(str))[["revenue", "ending_clab"]] / 1e6
-c1, c2 = st.columns(2)
-with c1:
-    st.caption("Revenue $M")
-    st.line_chart(chart["revenue"], height=240)
-with c2:
-    st.caption("CLAB $M")
-    st.line_chart(chart["ending_clab"], height=240)
-
-st.caption("Applications x approval x ticket = originations. CLAB = surviving vintages. Revenue = avg CLAB x yield.")
+chart = co.set_index("month")[["revenue", "ending_clab", "pll"]] / 1e6
+a, b, c = st.columns(3)
+a.caption("Revenue $M")
+a.line_chart(chart["revenue"], height=200)
+b.caption("CLAB $M")
+b.line_chart(chart["ending_clab"], height=200)
+c.caption("PLL $M")
+c.line_chart(chart["pll"], height=200)
+st.caption("Originations = applications x approval x ticket. CLAB = surviving originations after paydown and the overlay. PLL = originations x lifetime default. ECL_end = ECL_start + PLL - NCO.")
